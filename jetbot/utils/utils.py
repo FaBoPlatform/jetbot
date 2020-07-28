@@ -25,7 +25,6 @@ def platform_is_nano():
 
 
 def get_ip_address(interface):
-    print("get_ip_address")
     try:
         if get_network_interface_state(interface) == 'down':
             return None
