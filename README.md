@@ -5,7 +5,6 @@
 ```
 $ git clone https://github.com/FaBoPlatform/jetbot
 $ cd jetbot
-$ git checkout FaBo
 $ sudo python3 setup.py install
 ```
 
