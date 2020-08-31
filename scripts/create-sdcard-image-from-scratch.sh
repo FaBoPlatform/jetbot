@@ -6,7 +6,6 @@ password='jetbot'
 
 # Record the time this script starts
 date
-
 # Get the full dir name of this script
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -17,6 +16,14 @@ while true; do sudo -n true; sleep 120; kill -0 "$$" || exit; done 2>/dev/null &
 # Enable i2c permissions
 echo -e "\e[100m Enable i2c permissions \e[0m"
 sudo usermod -aG i2c $USER
+
+# Make swapfile
+cd 
+sudo fallocate -l 4G /var/swapfile
+sudo chmod 600 /var/swapfile
+sudo mkswap /var/swapfile
+sudo swapon /var/swapfile
+sudo bash -c 'echo "/var/swapfile swap swap defaults 0 0" >> /etc/fstab'
 
 # Install pip and some python dependencies
 echo -e "\e[104m Install pip and some python dependencies \e[0m"
@@ -55,16 +62,22 @@ cd vision
 #git checkout v0.4.0
 sudo -H python3 setup.py install
 
+# Install torch2trt
+cd $HOME
+git clone https://github.com/NVIDIA-AI-IOT/torch2trt
+cd torch2trt
+sudo python3 setup.py install
+
 # Install traitlets (master, to support the unlink() method)
 echo -e "\e[48;5;172m Install traitlets \e[0m"
 #sudo python3 -m pip install git+https://github.com/ipython/traitlets@master
-sudo -H pip3 install traitlets
+sudo python3 -m pip install git+https://github.com/ipython/traitlets@dead2b8cdde5913572254cf6dc70b5a6065b86f8
 
 # Install jupyter lab
 echo -e "\e[48;5;172m Install Jupyter Lab \e[0m"
 sudo apt install -y curl
 curl -sL https://deb.nodesource.com/setup_10.x | sudo -E bash -
-sudo apt install -y nodejs 
+sudo apt install -y nodejs libffi-dev 
 sudo -H pip3 install jupyter jupyterlab
 sudo -H jupyter labextension install @jupyter-widgets/jupyterlab-manager
 
@@ -73,6 +86,22 @@ python3 -c "from notebook.auth.security import set_password; set_password('$pass
 
 # fix for permission error
 sudo chown -R jetbot:jetbot ~/.local/share/
+
+# Install jupyter_clickable_image_widget
+echo "\e[42m Install jupyter_clickable_image_widget \e[0m"
+cd
+sudo apt-get install libssl1.0-dev
+git clone https://github.com/jaybdub/jupyter_clickable_image_widget
+cd jupyter_clickable_image_widget
+git checkout tags/v0.1
+sudo -H pip3 install -e .
+sudo jupyter labextension install js
+sudo jupyter lab build
+
+# Install bokeh
+sudo pip3 install bokeh
+sudo jupyter labextension install @bokeh/jupyter_bokeh
+
 
 # install jetbot python module
 cd
@@ -92,13 +121,23 @@ sudo mv jetbot_jupyter.service /etc/systemd/system/jetbot_jupyter.service
 sudo systemctl enable jetbot_jupyter
 sudo systemctl start jetbot_jupyter
 
-# Make swapfile
-cd 
-sudo fallocate -l 4G /var/swapfile
-sudo chmod 600 /var/swapfile
-sudo mkswap /var/swapfile
-sudo swapon /var/swapfile
-sudo bash -c 'echo "/var/swapfile swap swap defaults 0 0" >> /etc/fstab'
+
+# install python gst dependencies
+sudo apt-get install -y \
+    libwayland-egl1 \
+    gstreamer1.0-plugins-bad \
+    libgstreamer-plugins-bad1.0-0 \
+    gstreamer1.0-plugins-good \
+    python3-gst-1.0
+    
+# install zmq dependency (should actually already be resolved by jupyter)
+sudo -H pip3 install pyzmq
+    
+
+# Optimize the system configuration to create more headroom
+sudo nvpmodel -m 0
+sudo systemctl set-default multi-user
+sudo systemctl disable nvzramconfig.service
 
 # Copy JetBot notebooks to home directory
 cp -r ~/jetbot/notebooks ~/Notebooks
