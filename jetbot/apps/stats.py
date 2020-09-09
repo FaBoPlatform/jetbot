@@ -32,8 +32,16 @@ import subprocess
 # 128x32 display with hardware I2C:
 disp = Adafruit_SSD1306.SSD1306_128_32(rst=None, i2c_bus=1, gpio=1) # setting gpio to 1 is hack to avoid platform detection
 
-# Initialize library.
-disp.begin()
+while True:
+    
+    try:
+        # Try to connect to the OLED display module via I2C.
+        disp.begin()
+    except OSError as err:
+        print("OS error: {0}".format(err))
+        time.sleep(10)
+    else:
+        break
 
 # Clear display.
 disp.clear()
@@ -78,8 +86,8 @@ while True:
 
     # Write two lines of text.
 
-    draw.text((x, top),       "eth0: " + str(get_ip_address('eth0')),  font=font, fill=255)
-    draw.text((x, top+8),     "wlan0: " + str(get_ip_address('wlan0')), font=font, fill=255)
+    draw.text((x, top),       "eth0:" + str(get_ip_address('eth0')),  font=font, fill=255)
+    draw.text((x, top+8),     "wlan0:" + str(get_ip_address('wlan0')), font=font, fill=255)
     draw.text((x, top+16),    str(MemUsage.decode('utf-8')),  font=font, fill=255)
     draw.text((x, top+25),    str(Disk.decode('utf-8')),  font=font, fill=255)
 

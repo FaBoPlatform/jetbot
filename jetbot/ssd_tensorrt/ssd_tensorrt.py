@@ -14,10 +14,32 @@ Y0_IDX = 4
 X1_IDX = 5
 Y1_IDX = 6
 
+def download_model(model_name):
+    import six.moves.urllib as urllib
+    import tarfile
+    """
+    Download Model form TF's Model Zoo
+    """
+    model_file = model_name + ".tar.gz"
+    download_base = 'http://download.tensorflow.org/models/object_detection/'
+    if not os.path.isfile(model_file):
+        print('{} not found. Downloading it now.'.format(model_file))
+        opener = urllib.request.URLopener()
+        opener.retrieve(download_base + model_file, model_file)
+    else:
+        print('{} found. Proceed.'.format(model_file))
+    if not os.path.isdir(model_name):
+        print('{} not found. Extract it now.'.format(model_name))
+        tar_file = tarfile.open(model_file)
+        tar_file.extractall()
+        tar_file.close()
+    else:
+        print('{} found. Proceed.'.format(model_name))
+
 
 def parse_boxes(outputs):
     bboxes = outputs[0]
-            
+
     # iterate through each image index
     all_detections = []
     for i in range(bboxes.shape[0]):
@@ -30,7 +52,7 @@ def parse_boxes(outputs):
             label = bbox[LABEL_IDX]
 
             # last detection if < 0
-            if label < 0: 
+            if label < 0:
                 break
 
             detections.append(dict(
@@ -51,7 +73,7 @@ def parse_boxes(outputs):
 
 def load_plugins():
     library_path = os.path.join(
-        os.path.dirname(__file__), 'libssd_tensorrt.so')
+        os.path.dirname(os.path.abspath(__file__)), 'libssd_tensorrt.so')
     ctypes.CDLL(library_path)
 
 
@@ -261,3 +283,25 @@ def ssd_uff_to_engine(uff_buffer,
         engine = builder.build_cuda_engine(network)
 
     return engine
+
+if __name__ == '__main__':
+    model_name = "ssd_mobilenet_v2_coco_2018_03_29"
+    checkpoint_path = model_name + "/model.ckpt"
+    config_path = model_name + "/pipeline.config"
+    output_engine = "ssd_mobilenet_v2_coco.engine"
+    download_model(model_name)
+
+    uff_buffer = ssd_pipeline_to_uff(checkpoint_path, config_path, tmp_dir='exported_model')
+
+    engine = ssd_uff_to_engine(uff_buffer,
+                               fp16_mode=True,
+                               max_batch_size=1,
+                               max_workspace_size=1 << 26,
+                               min_find_iterations=2,
+                               average_find_iterations=1,
+                               strict_type_constraints=False,
+                               log_level=trt.Logger.INFO)
+
+    buf = engine.serialize()
+    with open(output_engine, 'wb') as f:
+        f.write(buf)
