@@ -3,6 +3,7 @@ import numpy as np
 import os
 import subprocess
 import tensorrt as trt
+import graphsurgeon as gs
 
 TRT_INPUT_NAME = 'input'
 TRT_OUTPUT_NAME = 'nms'
@@ -104,9 +105,9 @@ def _load_config(config_path):
     return config
 
 
-def ssd_pipeline_to_uff(checkpoint_path, config_path,
+def ssd_pipeline_to_uff(checkpoint_path, config_path, input_order,
                         tmp_dir='exported_model'):
-    import graphsurgeon as gs
+    #import graphsurgeon as gs
     from object_detection import exporter
     import tensorflow as tf
     import uff
@@ -131,6 +132,8 @@ def ssd_pipeline_to_uff(checkpoint_path, config_path,
     # export checkpoint and config to frozen graph
     with tf.Session(config=tf_config) as tf_sess:
         with tf.Graph().as_default() as tf_graph:
+            if os.path.exists(tmp_dir):
+                subprocess.call(['rm', '-rf', tmp_dir])
             subprocess.call(['mkdir', '-p', tmp_dir])
             exporter.export_inference_graph(
                 'image_tensor',
@@ -187,39 +190,73 @@ def ssd_pipeline_to_uff(checkpoint_path, config_path,
         topK=nms_config.max_detections_per_class,
         keepTopK=nms_config.max_total_detections,
         numClasses=config.model.ssd.num_classes + 1,  # add background
-        inputOrder=[1, 2, 0],
+        inputOrder=input_order,
         confSigmoid=1,
-        isNormalized=1,
-        scoreConverter="SIGMOID",
-        codeType=3)
+        isNormalized=1
+        )
+        #scoreConverter="SIGMOID",
+        #codeType=3)
 
     priorbox_concat_plugin = gs.create_node(
-        "priorbox_concat", op="ConcatV2", dtype=tf.float32, axis=2)
-
-    boxloc_concat_plugin = gs.create_plugin_node(
-        "boxloc_concat",
-        op="FlattenConcat_TRT_jetbot",
+        "priorbox_concat",
+        op="ConcatV2",
         dtype=tf.float32,
-    )
+        axis=2)
 
-    boxconf_concat_plugin = gs.create_plugin_node(
-        "boxconf_concat",
-        op="FlattenConcat_TRT_jetbot",
-        dtype=tf.float32,
-    )
+    # Reference: https://github.com/jkjung-avt/tensorrt_demos/blob/1b274b874b59c0c7ed05f5efb2d89c0089fa3a15/ssd/build_engine.py
+    if trt.__version__[0] >= '7':
+        boxloc_concat_plugin = gs.create_plugin_node(
+            "boxloc_concat",
+            op="FlattenConcat_TRT_jetbot",
+            dtype=tf.float32,
+            )
+
+        boxconf_concat_plugin = gs.create_plugin_node(
+            "boxconf_concat",
+            op="FlattenConcat_TRT_jetbot",
+            dtype=tf.float32,
+            )
+    else:
+        boxloc_concat_plugin = gs.create_plugin_node(
+            "boxloc_concat",
+            op="FlattenConcat_TRT_jetbot",
+            dtype=tf.float32,
+            )
+
+        boxconf_concat_plugin = gs.create_plugin_node(
+            "boxconf_concat",
+            op="FlattenConcat_TRT_jetbot",
+            dtype=tf.float32,
+            )
 
     namespace_plugin_map = {
         "MultipleGridAnchorGenerator": priorbox_plugin,
         "Postprocessor": nms_plugin,
         "Preprocessor": input_plugin,
         "ToFloat": input_plugin,
+        "Cast": input_plugin, # add for models trained with tf 1.15+
         "image_tensor": input_plugin,
-        "Concatenate": priorbox_concat_plugin,
+        "MultipleGridAnchorGenerator/Concatenate": priorbox_concat_plugin,  # for 'ssd_mobilenet_v1_coco'
+        "Concatenate": priorbox_concat_plugin, # for other models
         "concat": boxloc_concat_plugin,
         "concat_1": boxconf_concat_plugin
     }
 
+    dynamic_graph.remove(dynamic_graph.find_nodes_by_path(['Preprocessor/map/TensorArrayStack_1/TensorArrayGatherV3']), remove_exclusive_dependencies=False)  # for 'ssd_inception_v2_coco'
     dynamic_graph.collapse_namespaces(namespace_plugin_map)
+
+    # Replace all 'FusedBatchNormV3' in the graph with 'FusedBatchNorm'.
+    # 'FusedBatchNormV3' is not supported by UFF parser.
+    replace_fusedbnv3(dynamic_graph)
+    #for node in dynamic_graph.find_nodes_by_op('FusedBatchNormV3'):
+    #    gs.update_node(node, op='FusedBatchNorm')
+
+    # Replace all 'AddV2' in the graph with 'Add'.
+    # 'AddV2' is not supported by UFF parser.
+    replace_addv2(dynamic_graph)
+    #for node in dynamic_graph.find_nodes_by_op('AddV2'):
+    #    gs.update_node(node, op='Add')
+
 
     # fix name
     for i, name in enumerate(
@@ -284,14 +321,39 @@ def ssd_uff_to_engine(uff_buffer,
 
     return engine
 
+def replace_addv2(graph):
+    """Replace all 'AddV2' in the graph with 'Add'.
+    'AddV2' is not supported by UFF parser.
+    Reference:
+    1. https://github.com/jkjung-avt/tensorrt_demos/issues/113#issuecomment-629900809
+    2. https://github.com/jkjung-avt/tensorrt_demos/blob/1b274b874b59c0c7ed05f5efb2d89c0089fa3a15/ssd/build_engine.py
+    """
+    for node in graph.find_nodes_by_op('AddV2'):
+        gs.update_node(node, op='Add')
+    return graph
+
+def replace_fusedbnv3(graph):
+    """Replace all 'FusedBatchNormV3' in the graph with 'FusedBatchNorm'.
+    'FusedBatchNormV3' is not supported by UFF parser.
+    Reference:
+    1. https://devtalk.nvidia.com/default/topic/1066445/tensorrt/tensorrt-6-0-1-tensorflow-1-14-no-conversion-function-registered-for-layer-fusedbatchnormv3-yet/post/5403567/#5403567
+    2. https://github.com/jkjung-avt/tensorrt_demos/issues/76#issuecomment-607879831
+    3. https://github.com/jkjung-avt/tensorrt_demos/blob/1b274b874b59c0c7ed05f5efb2d89c0089fa3a15/ssd/build_engine.py
+    """
+    for node in graph.find_nodes_by_op('FusedBatchNormV3'):
+        gs.update_node(node, op='FusedBatchNorm')
+    return graph
+
 if __name__ == '__main__':
     model_name = "ssd_mobilenet_v2_coco_2018_03_29"
     checkpoint_path = model_name + "/model.ckpt"
     config_path = model_name + "/pipeline.config"
     output_engine = "ssd_mobilenet_v2_coco.engine"
+    input_order = [1, 2, 0]
+    #input_order = [1, 0, 2]
     download_model(model_name)
 
-    uff_buffer = ssd_pipeline_to_uff(checkpoint_path, config_path, tmp_dir='exported_model')
+    uff_buffer = ssd_pipeline_to_uff(checkpoint_path, config_path, input_order, tmp_dir='exported_model')
 
     engine = ssd_uff_to_engine(uff_buffer,
                                fp16_mode=True,
@@ -305,3 +367,4 @@ if __name__ == '__main__':
     buf = engine.serialize()
     with open(output_engine, 'wb') as f:
         f.write(buf)
+
