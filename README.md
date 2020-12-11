@@ -1,10 +1,20 @@
 # JetBot
 
+
+## FaBo Support
+```
+$ git clone https://github.com/FaBoPlatform/jetbot
+$ cd jetbot
+$ sudo python3 setup.py install
+```
+[FaBo JetBot Docs](https://faboplatform.github.io/JetbotDocs)
+
 <!--[<img src="https://img.shields.io/discord/553852754058280961.svg">](https://discord.gg/Ady6NtF) -->
 
 > Looking for a quick way to get started with JetBot?  Many third party kits are [now available](https://jetbot.org/master/third_party_kits.html)!
 
-<img src="../..//wiki/images/jetson-jetbot-illustration_1600x1260.png" height="256">
+
+<img src="https://github.com/NVIDIA-AI-IOT/jetbot/wiki/images/jetson-jetbot-illustration_1600x1260.png" height="256">
 
 JetBot is an open-source robot based on NVIDIA Jetson Nano that is
 
